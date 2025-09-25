@@ -1,0 +1,67 @@
+task:
+  name: InductiveInference
+  metric: ["mrr", "hits@10"]
+  num_negative: 256
+  strict_negative: true
+  adversarial_temperature: 1.0
+
+dataset:
+  class: FB15k237
+  root: ./data
+
+model:
+  relation_model:
+    class: SemmaRelModel
+    input_dim: 64
+    hidden_dims: [64, 64, 64, 64, 64, 64]
+    fusion: mlp
+    alpha: 1.0
+    struct_kwargs:
+      message_func: distmult
+      aggregate_func: sum
+      short_cut: true
+      layer_norm: false
+      activation: relu
+      concat_hidden: false
+    text_kwargs:
+      message_func: distmult
+      aggregate_func: sum
+      short_cut: true
+      layer_norm: false
+      activation: relu
+      concat_hidden: false
+  entity_model:
+    class: EntityNBFNet
+    input_dim: 64
+    hidden_dims: [64, 64, 64, 64, 64, 64]
+    message_func: distmult
+    aggregate_func: sum
+    short_cut: true
+    layer_norm: false
+    activation: relu
+    concat_hidden: false
+    num_mlp_layer: 2
+
+train:
+  num_epoch: 0
+  batch_size: 64
+  batch_per_epoch: null
+  log_interval: 50
+
+optimizer:
+  class: Adam
+  lr: 0.0005
+
+checkpoint: ./ckpts/ultra_4g.pth
+
+# SEMMA 文本语义配置（使用GPT-4o + HuggingFace jina-embeddings-v3）
+text:
+  generate: true  # 启用在线文本嵌入生成
+  api_key: "sk-dvJb2Dz7h6ikAnEAXP7morrMIIxTcpQN6EPKTUza7AqmSkNc"  # DMX API密钥
+  llm_model: "gpt-4o-2024-11-20"  # LLM模型
+  cache_dir: "./cache"  # 语义缓存目录
+  combine: "COMBINED_SUM"  # 文本组合策略: REL_NAME, LLM_REL_NAME, LLM_REL_DESC, COMBINED_SUM, COMBINED_AVG
+  threshold: 0.8  # 文本关系图余弦相似度阈值
+  top_percent: null  # Top-x%采样（null表示不使用）
+  hybrid: true  # 启用HYBRID自适应开关
+  force_regenerate: false  # 强制重新生成语义（忽略缓存）
