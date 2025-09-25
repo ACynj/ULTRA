@@ -22,9 +22,22 @@ from ultra import models, datasets
 logger = logging.getLogger(__file__)
 
 
+def _read_text_with_fallback(path):
+    """Read text file with UTF-8 first, fallback to UTF-8-SIG and GBK on Windows."""
+    try:
+        with open(path, "r", encoding="utf-8") as fin:
+            return fin.read()
+    except UnicodeDecodeError:
+        try:
+            with open(path, "r", encoding="utf-8-sig") as fin:
+                return fin.read()
+        except UnicodeDecodeError:
+            # Final fallback for Windows environments with GBK default
+            with open(path, "r", encoding="gbk", errors="ignore") as fin:
+                return fin.read()
+
 def detect_variables(cfg_file):
-    with open(cfg_file, "r") as fin:
-        raw = fin.read()
+    raw = _read_text_with_fallback(cfg_file)
     env = jinja2.Environment()
     tree = env.parse(raw)
     vars = meta.find_undeclared_variables(tree)
@@ -32,8 +45,7 @@ def detect_variables(cfg_file):
 
 
 def load_config(cfg_file, context=None):
-    with open(cfg_file, "r") as fin:
-        raw = fin.read()
+    raw = _read_text_with_fallback(cfg_file)
     template = jinja2.Template(raw)
     instance = template.render(context)
     cfg = yaml.safe_load(instance)
@@ -103,8 +115,9 @@ def synchronize():
 
 
 def get_device(cfg):
-    if cfg.train.gpus:
-        device = torch.device(cfg.train.gpus[get_rank()])
+    gpu_list = getattr(cfg.train, 'gpus', None)
+    if gpu_list:
+        device = torch.device(gpu_list[get_rank()])
     else:
         device = torch.device("cpu")
     return device
@@ -113,11 +126,12 @@ def get_device(cfg):
 def create_working_directory(cfg):
     file_name = "working_dir.tmp"
     world_size = get_world_size()
-    if cfg.train.gpus is not None and len(cfg.train.gpus) != world_size:
+    gpu_list = getattr(cfg.train, 'gpus', None)
+    if gpu_list is not None and len(gpu_list) != world_size:
         error_msg = "World size is %d but found %d GPUs in the argument"
         if world_size == 1:
             error_msg += ". Did you launch with `python -m torch.distributed.launch`?"
-        raise ValueError(error_msg % (world_size, len(cfg.train.gpus)))
+        raise ValueError(error_msg % (world_size, len(gpu_list)))
     if world_size > 1 and not dist.is_initialized():
         dist.init_process_group("nccl", init_method="env://")
 

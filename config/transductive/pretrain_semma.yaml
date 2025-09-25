@@ -1,0 +1,66 @@
+output_dir: ./output
+
+dataset:
+  class: JointDataset
+  graphs: [FB15k237, WN18RR, CoDExMedium]
+  root: ./kg-datasets/
+
+model:
+  class: Semma
+  relation_model:
+    class: SemmaRelModel
+    input_dim: 64
+    hidden_dims: [64, 64, 64, 64, 64, 64]
+    fusion: mlp
+    alpha: 1.0
+    struct_kwargs:
+      message_func: distmult
+      aggregate_func: sum
+      short_cut: true
+      layer_norm: false
+      activation: relu
+      concat_hidden: false
+    text_kwargs:
+      message_func: distmult
+      aggregate_func: sum
+      short_cut: true
+      layer_norm: false
+      activation: relu
+      concat_hidden: false
+  entity_model:
+    class: EntityNBFNet
+    input_dim: 64
+    hidden_dims: [64, 64, 64, 64, 64, 64]
+    message_func: distmult
+    aggregate_func: sum
+    short_cut: yes
+    layer_norm: yes
+
+task:
+  name: MultiGraphPretraining
+  num_negative: 512
+  strict_negative: yes
+  adversarial_temperature: 1
+  metric: [mr, mrr, hits@1, hits@3, hits@10]
+
+optimizer:
+  class: AdamW
+  lr: 5.0e-4
+
+text:
+  generate: true
+  api_key: "sk-dvJb2Dz7h6ikAnEAXP7morrMIIxTcpQN6EPKTUza7AqmSkNc"
+  llm_model: "gpt-4o-2024-11-20"
+  cache_dir: "./cache"
+  combine: "COMBINED_SUM"
+  threshold: 0.8
+  top_percent: null
+  hybrid: true
+  force_regenerate: false
+
+train:
+  gpus: {{ gpus }}
+  batch_size: 64
+  num_epoch: 10
+  log_interval: 800
+  batch_per_epoch: 80000

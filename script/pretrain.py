@@ -17,6 +17,12 @@ from torch_geometric.data import Data
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from ultra import tasks, util
 from ultra.models import Ultra
+from ultra.text_semantics import (
+    load_or_generate_relation_semantics,
+    build_relation_embeddings,
+    make_inverse_by_negation,
+)
+from ultra.tasks import build_text_relation_graph
 
 
 separator = ">" * 30
@@ -278,6 +284,78 @@ if __name__ == "__main__":
             num_nodes=trg.num_nodes).to(device)
         for trg, valg, testg in zip(train_data, valid_data, test_data)
     ]
+
+    # =========================
+    # SEMMA: 在线生成关系文本语义并构建文本关系图（预训练，多图）
+    # =========================
+    if hasattr(cfg, 'text') and cfg.text is not None and getattr(cfg.text, 'generate', False):
+        # 配置
+        api_key = getattr(cfg.text, 'api_key', '')
+        llm_model = getattr(cfg.text, 'llm_model', 'gpt-4o-2024-11-20')
+        cache_dir = getattr(cfg.text, 'cache_dir', './cache')
+        combine = getattr(cfg.text, 'combine', 'COMBINED_SUM')
+        threshold = getattr(cfg.text, 'threshold', 0.8)
+        top_percent = getattr(cfg.text, 'top_percent', None)
+        force_regen = getattr(cfg.text, 'force_regenerate', False)
+
+        # 用第一个训练图提取关系与示例（关系在多图间共享）
+        base_graph = train_data[0]
+        num_rel_direct = base_graph.num_relations // 2
+        tokens = getattr(base_graph, 'relation_tokens', None)
+        rel_names = [tokens[i] if tokens is not None and i < len(tokens) else f"r{i}" for i in range(num_rel_direct)]
+
+        rel_to_example = {}
+        etypes = base_graph.target_edge_type
+        eidx = base_graph.target_edge_index
+        seen = set()
+        for col in range(etypes.shape[0]):
+            r = int(etypes[col].item())
+            if r >= num_rel_direct or r in seen:
+                continue
+            h = int(eidx[0, col].item())
+            t = int(eidx[1, col].item())
+            head_txt = "head_entity"
+            tail_txt = "tail_entity"
+            rel_to_example[rel_names[r]] = (head_txt, rel_names[r], tail_txt)
+            seen.add(r)
+            if len(seen) == num_rel_direct:
+                break
+
+        # 生成/加载关系语义（缓存）
+        cache_file = os.path.join(cache_dir, f"relation_semantics_{cfg.dataset['class'].lower()}_pretrain.pkl")
+        cleaned, descs = load_or_generate_relation_semantics(
+            rel_to_example=rel_to_example,
+            cache_file=cache_file,
+            api_key=api_key,
+            model=llm_model,
+            force_regenerate=force_regen,
+        )
+
+        # 文本嵌入
+        rel_text_init = build_relation_embeddings(
+            rel_names=rel_names,
+            cleaned=cleaned,
+            descs=descs,
+            combine=combine,
+        )
+        rel_text_full = (
+            make_inverse_by_negation(rel_text_init)
+            if rel_text_init.shape[0] * 2 == base_graph.num_relations
+            else rel_text_init
+        )
+
+        # 为所有图构建文本关系图
+        train_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in train_data]
+        valid_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in valid_data]
+        test_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in test_data]
+
+        # HYBRID: 在验证集上选择 alpha（使用第一对图做快速选择）
+        if getattr(cfg.text, 'hybrid', False) and hasattr(model, 'relation_model') and hasattr(model.relation_model, 'alpha'):
+            model.relation_model.alpha = 1.0
+            mrr_text = test(cfg, model, valid_data, filtered_data=filtered_data)
+            model.relation_model.alpha = 0.0
+            mrr_struct = test(cfg, model, valid_data, filtered_data=filtered_data)
+            model.relation_model.alpha = 1.0 if mrr_text >= mrr_struct else 0.0
 
     train_and_validate(cfg, model, train_data, valid_data if "fast_test" not in cfg.train else short_valid, filtered_data=filtered_data, batch_per_epoch=cfg.train.batch_per_epoch)
     if util.get_rank() == 0:
