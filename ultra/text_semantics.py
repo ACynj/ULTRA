@@ -7,6 +7,7 @@ import pickle
 from typing import Dict, List, Tuple, Optional
 import torch
 import requests
+from torch.fx.experimental.symbolic_shapes import TrueDiv
 
 logger = logging.getLogger(__name__)
 
@@ -248,22 +249,79 @@ def embed_with_jina_hf(texts: List[str], model_name: str = "jinaai/jina-embeddin
     except Exception as e:
          raise RuntimeError("transformers and torch are required. Please install: pip install transformers torch") from e
     
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # 仅在 CPU 时禁用 flash-attn / triton，GPU 上允许其按可用性工作
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if device == "cpu":
+        os.environ.setdefault("FLASH_ATTENTION_SKIP", "1")
+        os.environ.setdefault("FLASH_ATTN_DISABLE", "1")
+        os.environ.setdefault("DISABLE_FLASH_ATTN", "1")
+        os.environ.setdefault("USE_FLASH_ATTENTION", "0")
+        os.environ.setdefault("USE_TRITON", "0")
+        os.environ.setdefault("TRITON_AVAILABLE", "0")
+
     # Download model from HuggingFace Hub (will cache locally after first download)
     print(f"Loading jina-embeddings-v3 from HuggingFace: {model_name}")
-    model = AutoModel.from_pretrained(
-        model_name, 
-        trust_remote_code=True, # 信任远程代码
-        cache_dir=None,  # 使用默认缓存目录
-        force_download=False,  # 使用缓存版本
-        resume_download=True   # 继续下载
-    )
-    
-    # When calling the `encode` function, you can choose a `task` based on the use case:
-    # 'retrieval.query', 'retrieval.passage', 'separation', 'classification', 'text-matching'
-    # For relation text matching in knowledge graphs, we use 'text-matching'
+    # 优先按 CPU/eager 路线加载，避免触发 flash-attn 后端
+    try:
+        model = AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            cache_dir=None,
+            resume_download=True,
+            torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
+            attn_implementation=("eager" if device == "cpu" else None),
+        )
+    except TypeError:
+        # 某些 transformers 版本不支持 attn_implementation 参数
+        model = AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            cache_dir=None,
+            resume_download=True,
+            torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
+        )
+
+    # 放到目标设备
+    try:
+        model.to(device)
+    except Exception:
+        pass
+
+    # When calling the `encode` function, choose task 'text-matching'
     print(f"Generating embeddings for {len(texts)} texts using jina-embeddings-v3...")
-    embeddings = model.encode(texts, task="text-matching")
-    
+    try:
+        with torch.no_grad():
+            embeddings = model.encode(texts, task="text-matching", device=device)
+    except ValueError as e:
+        # 针对 "Cannot find backend for cpu" 的降级处理
+        if "backend for cpu" in str(e).lower():
+            print("Warning: flash-attn backend not available on CPU. Retrying with safe flags...")
+            os.environ["FLASH_ATTENTION_SKIP"] = "1"
+            os.environ["FLASH_ATTN_DISABLE"] = "1"
+            os.environ["DISABLE_FLASH_ATTN"] = "1"
+            os.environ["USE_FLASH_ATTENTION"] = "0"
+            os.environ["USE_TRITON"] = "0"
+            # 尝试再次推理；部分实现支持 device 参数
+            try:
+                with torch.no_grad():
+                    embeddings = model.encode(texts, task="text-matching", device="cpu")
+            except Exception:
+                # 最后一次回退：重新以最小配置加载并执行
+                try:
+                    model = AutoModel.from_pretrained(
+                        model_name,
+                        trust_remote_code=True,
+                        torch_dtype=torch.float32,
+                    )
+                    model.to("cpu")
+                    with torch.no_grad():
+                        embeddings = model.encode(texts, task="text-matching")
+                except Exception as ee:
+                    raise RuntimeError(f"jina-embeddings-v3 CPU 推理失败：{ee}") from ee
+        else:
+            raise
+
     print(f"Generated embeddings with shape: {embeddings.shape}")
     
     # Return as torch tensor with float32 dtype

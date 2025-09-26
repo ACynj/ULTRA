@@ -318,6 +318,26 @@ if __name__ == "__main__":
         num_rel_direct = train_data.num_relations // 2
         # 尝试从训练数据中获取关系的文本的名称列表
         tokens = getattr(train_data, 'relation_tokens', None)
+        if tokens is None:
+            # try load human-readable relation names from cached raw relations.dict in working_dir
+            def _try_load_tokens_from_cache():
+                import glob, os
+                roots = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '*', '*', 'raw', 'relations.dict'))
+                for p in roots:
+                    try:
+                        with open(p, 'r', encoding='utf-8') as f:
+                            lines = [l.strip() for l in f if l.strip()]
+                        id_to_name = {}
+                        for l in lines:
+                            parts = l.split('\t')
+                            if len(parts) == 2 and parts[0].isdigit():
+                                id_to_name[int(parts[0])] = parts[1]
+                        if len(id_to_name) >= num_rel_direct:
+                            return [id_to_name.get(i, f"r{i}") for i in range(num_rel_direct)]
+                    except Exception:
+                        continue
+                return None
+            tokens = _try_load_tokens_from_cache()
         # 如果有预定义的tokens（关系文本名称），就用tokens[i]作为第 i 个正向关系的名称；如果没有，就用r0、r1、r2... 这样的默认名称。
         rel_names = [tokens[i] if tokens is not None and i < len(tokens) else f"r{i}" for i in range(num_rel_direct)]
         

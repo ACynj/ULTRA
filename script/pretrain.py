@@ -292,7 +292,7 @@ if __name__ == "__main__":
         # 配置
         api_key = getattr(cfg.text, 'api_key', '')
         llm_model = getattr(cfg.text, 'llm_model', 'gpt-4o-2024-11-20')
-        cache_dir = getattr(cfg.text, 'cache_dir', './cache')
+        cache_dir = getattr(cfg.text, 'cache_dir', '../../../../cache')
         combine = getattr(cfg.text, 'combine', 'COMBINED_SUM')
         threshold = getattr(cfg.text, 'threshold', 0.8)
         top_percent = getattr(cfg.text, 'top_percent', None)
@@ -301,7 +301,28 @@ if __name__ == "__main__":
         # 用第一个训练图提取关系与示例（关系在多图间共享）
         base_graph = train_data[0]
         num_rel_direct = base_graph.num_relations // 2
-        tokens = getattr(base_graph, 'relation_tokens', None)
+    tokens = getattr(base_graph, 'relation_tokens', None)
+    if tokens is None:
+        # try to load human-readable relation names from cached raw dumps (relations.dict)
+        def _try_load_tokens_from_cache():
+            import glob
+            roots = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '*', '*', 'raw', 'relations.dict'))
+            for p in roots:
+                try:
+                    with open(p, 'r', encoding='utf-8') as f:
+                        lines = [l.strip() for l in f if l.strip()]
+                    # relations.dict is usually id\tname
+                    id_to_name = {}
+                    for l in lines:
+                        parts = l.split('\t')
+                        if len(parts) == 2 and parts[0].isdigit():
+                            id_to_name[int(parts[0])] = parts[1]
+                    if len(id_to_name) >= num_rel_direct:
+                        return [id_to_name.get(i, f"r{i}") for i in range(num_rel_direct)]
+                except Exception:
+                    continue
+            return None
+        tokens = _try_load_tokens_from_cache()
         rel_names = [tokens[i] if tokens is not None and i < len(tokens) else f"r{i}" for i in range(num_rel_direct)]
 
         rel_to_example = {}
