@@ -263,24 +263,28 @@ def embed_with_jina_hf(texts: List[str], model_name: str = "jinaai/jina-embeddin
     # Download model from HuggingFace Hub (will cache locally after first download)
     print(f"Loading jina-embeddings-v3 from HuggingFace: {model_name}")
     # 优先按 CPU/eager 路线加载，避免触发 flash-attn 后端
-    try:
-        model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            cache_dir=None,
-            resume_download=True,
-            torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
-            attn_implementation=("eager" if device == "cpu" else None),
-        )
-    except TypeError:
-        # 某些 transformers 版本不支持 attn_implementation 参数
-        model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            cache_dir=None,
-            resume_download=True,
-            torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
-        )
+    cache_dir = r'/T20030104/ynj/ULTRA/models/jina-embeddings-v3'
+    model = AutoModel.from_pretrained(cache_dir,trust_remote_code=True, torch_dtype=torch.float32,local_files_only=True)
+    # try:
+    #     model = AutoModel.from_pretrained(
+    #         model_name,
+    #         trust_remote_code=True,
+    #         cache_dir=None,
+    #         resume_download=True,
+    #         force_download=True,
+    #         torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
+    #         attn_implementation=("eager" if device == "cpu" else None),
+    #     )
+    # except TypeError:
+    #     # 某些 transformers 版本不支持 attn_implementation 参数
+    #     model = AutoModel.from_pretrained(
+    #         model_name,
+    #         trust_remote_code=True,
+    #         cache_dir=None,
+    #         force_download=True,
+    #         resume_download=True,
+    #         torch_dtype=(torch.float16 if device == "cuda" else torch.float32),
+    #     )
 
     # 放到目标设备
     try:

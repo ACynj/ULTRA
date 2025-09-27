@@ -186,11 +186,18 @@ class GeneralizedRelationalConv(MessagePassing):
         # reduce memory complexity from O(|E|d) to O(|V|d), so we can apply it to larger graphs
         from .rspmm import generalized_rspmm
 
+        device = relation.device
+        edge_weight = edge_weight.to(device)
+        edge_index = edge_index.to(device)
+        edge_type = edge_type.to(device)
+        input = input.to(device)
+        boundary = boundary.to(device)
+
         batch_size, num_node = input.shape[:2]
         input = input.transpose(0, 1).flatten(1)
         relation = relation.transpose(0, 1).flatten(1)
         boundary = boundary.transpose(0, 1).flatten(1)
-        degree_out = degree(index, dim_size).unsqueeze(-1) + 1
+        degree_out = degree(index.to(device), dim_size).unsqueeze(-1) + 1
 
         if self.message_func in self.message2mul:
             mul = self.message2mul[self.message_func]
