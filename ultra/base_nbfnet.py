@@ -9,15 +9,31 @@ from . import tasks, layers
 
 
 class BaseNBFNet(nn.Module):
-
+    # input_dim: 输入特征的维度
+    # hidden_dims: 隐藏层的维度
+    # num_relation: 图中关系的种类数 ，这里是4，即四种连接方式
+    # message_func: 消息传递函数
+    # aggregate_func: 聚合函数
+    # short_cut：是否使用残差连接
+    # layer_norm: 是否使用层归一化
+    # activation: 激活函数
+    # concat_hidden: 是否将所有层的隐藏状态拼接起来
+    # num_mlp_layer: MLP的层数
+    # dependent: 是否依赖于其它层
+    # remove_one_hop: 是否移除一跳边
+    # num_beam: Beam search的宽度
+    # path_topk: 选择路径的top-k
+    # **kwargs: 其他参数
     def __init__(self, input_dim, hidden_dims, num_relation, message_func="distmult", aggregate_func="sum",
                  short_cut=False, layer_norm=False, activation="relu", concat_hidden=False, num_mlp_layer=2,
                  dependent=False, remove_one_hop=False, num_beam=10, path_topk=10, **kwargs):
         super(BaseNBFNet, self).__init__()
-
+        
+        # 如果hidden_dims不是序列类型，将其转换为列表
         if not isinstance(hidden_dims, Sequence):
             hidden_dims = [hidden_dims]
 
+        # 将输入维度和隐藏层组合成一个列表
         self.dims = [input_dim] + list(hidden_dims)
         self.num_relation = num_relation
         self.short_cut = short_cut  # whether to use residual connections between GNN layers

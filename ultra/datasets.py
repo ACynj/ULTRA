@@ -352,15 +352,24 @@ class TransductiveDataset(InMemoryDataset):
     def processed_file_names(self):
         return "data.pt"
 
+class WN18RR_(TransductiveDataset):
+    name = "wn18rr"
+    urls = [
+        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/text/train.txt",
+        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/text/valid.txt",
+        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/text/test.txt",
+    ]
+    def __init__(self, root):
+        super().__init__(root=root)
 
 
 class CoDEx(TransductiveDataset):
 
     name = "codex"
     urls = [
-        "https://raw.githubusercontent.com/tsafavi/codex/master/data/triples/%s/train.txt",
-        "https://raw.githubusercontent.com/tsafavi/codex/master/data/triples/%s/valid.txt",
-        "https://raw.githubusercontent.com/tsafavi/codex/master/data/triples/%s/test.txt",
+        "https://raw.githubusercontent.com/ACynj/dataset/refs/heads/main/CODEX/%s/train.txt",
+        "https://raw.githubusercontent.com/ACynj/dataset/refs/heads/main/CODEX/%s/valid.txt",
+        "https://raw.githubusercontent.com/ACynj/dataset/refs/heads/main/CODEX/%s/test.txt",
     ]
     
     def download(self):
@@ -381,7 +390,6 @@ class CoDExSmall(CoDEx):
 
     def __init__(self, root):
         super(CoDExSmall, self).__init__(root=root, size='s')
-
 
 class CoDExMedium(CoDEx):
     """
@@ -1049,10 +1057,10 @@ class WikiTopicsMT4(MTDEAInductive):
 
 # a joint dataset for pre-training ULTRA on several graphs
 class JointDataset(InMemoryDataset):
-
+    # 定义一个继承自 InMemoryDataset 的联合数据集类，用于将多个知识图谱数据集联合起来做预训练
     datasets_map = {
         'FB15k237': FB15k237,
-        'WN18RR': WN18RR,
+        'WN18RR': WN18RR_,
         'CoDExSmall': CoDExSmall,
         'CoDExMedium': CoDExMedium,
         'CoDExLarge': CoDExLarge,
@@ -1065,8 +1073,9 @@ class JointDataset(InMemoryDataset):
 
     def __init__(self, root, graphs, transform=None, pre_transform=None):
 
-
+        # 获取每一个数据集对象
         self.graphs = [self.datasets_map[ds](root=root) for ds in graphs]
+        # 记录联合的图谱数量
         self.num_graphs = len(graphs)
         super().__init__(root, transform, pre_transform)
         self.data = torch.load(self.processed_paths[0])

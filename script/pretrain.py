@@ -229,20 +229,27 @@ def test(cfg, model, test_data, filtered_data=None):
 
 
 if __name__ == "__main__":
+    # 返回参数对象args和变量字典vars
     args, vars = util.parse_args()
+    # 加载配置文件
     cfg = util.load_config(args.config, context=vars)
+    # 根据配置文件创建工作目录，并返回路径，路径在时间命名的文件夹下
     working_dir = util.create_working_directory(cfg)
-
+    # 配置随机种子，保证实验可重复性，util.get_rank()用于分布式训练时区分不同进程，每个进程的种子略有不同
     torch.manual_seed(args.seed + util.get_rank())
-
+    # 获取主日志记录器，用于输出训练、验证等过程中的信息
     logger = util.get_root_logger()
+    # 判断当前进程是否为主进程，分布式训练时只在主进程输出日志
     if util.get_rank() == 0:
-        logger.warning("Random seed: %d" % args.seed)
-        logger.warning("Config file: %s" % args.config)
-        logger.warning(pprint.pformat(cfg))
+        logger.warning("Random seed: %d" % args.seed) # 当前的随机种子
+        logger.warning("Config file: %s" % args.config) # 当前使用的配置文件路径
+        logger.warning(pprint.pformat(cfg)) # 输出完整的配置内容，格式化显示，方便后续流程控制
     
+    # 获取任务名称，如预训练、微调等
     task_name = cfg.task["name"]
+    # 根据配置cfg构建数据集对象，包含训练、验证、测试数据
     dataset = util.build_dataset(cfg)
+    # 根据配置获取计算设备
     device = util.get_device(cfg)
     
     train_data, valid_data, test_data = dataset._data[0], dataset._data[1], dataset._data[2]
@@ -291,92 +298,110 @@ if __name__ == "__main__":
     if hasattr(cfg, 'text') and cfg.text is not None and getattr(cfg.text, 'generate', False):
         # 配置
         api_key = getattr(cfg.text, 'api_key', '')
-        llm_model = getattr(cfg.text, 'llm_model', 'gpt-4o-2024-11-20')
+        # llm_model = getattr(cfg.text, 'llm_model', 'gpt-4o-2024-11-20')
+        llm_model = getattr(cfg.text, 'llm_model', 'Qwen3-8B')
         cache_dir = getattr(cfg.text, 'cache_dir', '../../../../cache')
         combine = getattr(cfg.text, 'combine', 'COMBINED_SUM')
         threshold = getattr(cfg.text, 'threshold', 0.8)
         top_percent = getattr(cfg.text, 'top_percent', None)
         force_regen = getattr(cfg.text, 'force_regenerate', False)
 
-        # 用第一个训练图提取关系与示例（关系在多图间共享）
-        base_graph = train_data[0]
-        num_rel_direct = base_graph.num_relations // 2
-    tokens = getattr(base_graph, 'relation_tokens', None)
-    if tokens is None:
-        # try to load human-readable relation names from cached raw dumps (relations.dict)
-        def _try_load_tokens_from_cache():
-            import glob
-            roots = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '*', '*', 'raw', 'relations.dict'))
-            for p in roots:
-                try:
-                    with open(p, 'r', encoding='utf-8') as f:
-                        lines = [l.strip() for l in f if l.strip()]
-                    # relations.dict is usually id\tname
-                    id_to_name = {}
-                    for l in lines:
-                        parts = l.split('\t')
-                        if len(parts) == 2 and parts[0].isdigit():
-                            id_to_name[int(parts[0])] = parts[1]
-                    if len(id_to_name) >= num_rel_direct:
-                        return [id_to_name.get(i, f"r{i}") for i in range(num_rel_direct)]
-                except Exception:
-                    continue
-            return None
-        tokens = _try_load_tokens_from_cache()
-        rel_names = [tokens[i] if tokens is not None and i < len(tokens) else f"r{i}" for i in range(num_rel_direct)]
 
+    def extract_relations_and_examples():
+        import os
+        import glob
+        relation_set = set()  # 存储不重复的关系
+        relation_first_triple = {}  # 存储每个关系第一次出现的三元组 (h, r, t)
+        # 查找 kg-datasets 下所有层级的 train.txt（根据实际目录结构调整 glob 模式）
+        train_files = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '**', 'train.txt'), recursive=True)
+        valid_files = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '**', 'valid.txt'), recursive=True)
+        test_files  = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '**', 'test.txt'), recursive=True)
+        all_files = train_files + valid_files + test_files
+        # 如果 train.txt 直接在数据集目录下（如 kg-datasets/fb15k237/train.txt），则改用：
+        # train_files = glob.glob(os.path.join(os.getcwd(), 'kg-datasets', '*', 'train.txt'))
+
+        for file in all_files:
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # 假设 train.txt 格式为：头实体\t关系\t尾实体（若为空格分隔，将 \t 改为 空格）
+                        parts = line.split('\t')
+                        if len(parts) >= 3:
+                            head, rel, tail = parts[0], parts[1], parts[2]
+                            relation_set.add(rel)
+                            # 只记录每个关系第一次出现的三元组
+                            if rel not in relation_first_triple:
+                                relation_first_triple[rel] = (head, rel, tail)
+            except Exception as e:
+                print(f"读取 {file} 时出错: {e}")
+        
+        # 生成有序的关系列表（保证每次运行顺序一致）
+        relations = sorted(list(relation_set))
+        # 生成“关系 -> 示例三元组”的映射
         rel_to_example = {}
-        etypes = base_graph.target_edge_type
-        eidx = base_graph.target_edge_index
-        seen = set()
-        for col in range(etypes.shape[0]):
-            r = int(etypes[col].item())
-            if r >= num_rel_direct or r in seen:
-                continue
-            h = int(eidx[0, col].item())
-            t = int(eidx[1, col].item())
-            head_txt = "head_entity"
-            tail_txt = "tail_entity"
-            rel_to_example[rel_names[r]] = (head_txt, rel_names[r], tail_txt)
-            seen.add(r)
-            if len(seen) == num_rel_direct:
-                break
+        for rel in relations:
+            if rel in relation_first_triple:
+                rel_to_example[rel] = relation_first_triple[rel]
+            else:
+                # 理论上不会触发，因为 relations 来自 relation_set
+                rel_to_example[rel] = (f"head_entity_{rel}", rel, f"tail_entity_{rel}")
+        return relations, rel_to_example
 
-        # 生成/加载关系语义（缓存）
-        cache_file = os.path.join(cache_dir, f"relation_semantics_{cfg.dataset['class'].lower()}_pretrain.pkl")
-        cleaned, descs = load_or_generate_relation_semantics(
-            rel_to_example=rel_to_example,
-            cache_file=cache_file,
-            api_key=api_key,
-            model=llm_model,
-            force_regenerate=force_regen,
-        )
+    # 从所有 train.txt 提取关系和示例
+    rel_names, rel_to_example = extract_relations_and_examples()
 
-        # 文本嵌入
-        rel_text_init = build_relation_embeddings(
+    # 生成/加载关系语义（缓存）
+    cache_file = os.path.join(cache_dir, f"relation_semantics_{cfg.dataset['class'].lower()}_pretrain.pkl")
+    cleaned, descs = load_or_generate_relation_semantics(
+        rel_to_example=rel_to_example,
+        cache_file=cache_file,
+        api_key=api_key,
+        model=llm_model,
+        force_regenerate=force_regen,
+    )
+
+    # 文本嵌入
+    rel_text_init = build_relation_embeddings(
             rel_names=rel_names,
             cleaned=cleaned,
             descs=descs,
             combine=combine,
         )
-        rel_text_full = (
-            make_inverse_by_negation(rel_text_init)
-            if rel_text_init.shape[0] * 2 == base_graph.num_relations
-            else rel_text_init
-        )
 
-        # 为所有图构建文本关系图
-        train_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in train_data]
-        valid_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in valid_data]
-        test_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in test_data]
+    # 以第一个训练图为基准判断是否需要补全逆关系
+    base_graph = train_data[0] if len(train_data) > 0 else None
+    # 自动补全逆关系嵌入，确保嵌入数量和图的关系数量一致
+    if base_graph is not None:
+        if rel_text_init.shape[0] * 2 == base_graph.num_relations:
+            rel_text_full = make_inverse_by_negation(rel_text_init)
+        elif rel_text_init.shape[0] == base_graph.num_relations:
+            rel_text_full = rel_text_init
+        else:
+            raise ValueError(f"关系嵌入数量({rel_text_init.shape[0]})与图的关系数量({base_graph.num_relations})不匹配，请检查关系id映射和嵌入生成逻辑！")
+    else:
+        rel_text_full = rel_text_init
+
+    # 强制断言所有图的关系数量和嵌入数量一致
+    for g in train_data + valid_data + test_data:
+        assert g.num_relations == rel_text_full.shape[0], f"关系数量不一致: {g.num_relations} vs {rel_text_full.shape[0]}"
+
+    # 为所有图构建文本关系图
+    train_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in train_data]
+    valid_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in valid_data]
+    test_data = [build_text_relation_graph(g, rel_text_full, threshold=threshold, top_percent=top_percent) for g in test_data]
 
         # HYBRID: 在验证集上选择 alpha（使用第一对图做快速选择）
-        if getattr(cfg.text, 'hybrid', False) and hasattr(model, 'relation_model') and hasattr(model.relation_model, 'alpha'):
-            model.relation_model.alpha = 1.0
-            mrr_text = test(cfg, model, valid_data, filtered_data=filtered_data)
-            model.relation_model.alpha = 0.0
-            mrr_struct = test(cfg, model, valid_data, filtered_data=filtered_data)
-            model.relation_model.alpha = 1.0 if mrr_text >= mrr_struct else 0.0
+    if getattr(cfg.text, 'hybrid', False) and hasattr(model, 'relation_model') and hasattr(model.relation_model, 'alpha'):
+        model.relation_model.alpha = 1.0
+        mrr_text = test(cfg, model, valid_data, filtered_data=filtered_data)
+        model.relation_model.alpha = 0.0
+        mrr_struct = test(cfg, model, valid_data, filtered_data=filtered_data)
+        model.relation_model.alpha = 1.0 if mrr_text >= mrr_struct else 0.0
+
+
 
     train_and_validate(cfg, model, train_data, valid_data if "fast_test" not in cfg.train else short_valid, filtered_data=filtered_data, batch_per_epoch=cfg.train.batch_per_epoch)
     if util.get_rank() == 0:

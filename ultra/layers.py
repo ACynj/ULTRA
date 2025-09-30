@@ -8,7 +8,7 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import degree
 from typing import Tuple
 
-
+# 定义一个广义关系卷积层
 class GeneralizedRelationalConv(MessagePassing):
 
     eps = 1e-6
@@ -21,6 +21,7 @@ class GeneralizedRelationalConv(MessagePassing):
     # TODO for compile() - doesn't work currently
     # propagate_type = {"edge_index": torch.LongTensor, "size": Tuple[int, int]}
 
+    # 构造函数
     def __init__(self, input_dim, output_dim, num_relation, query_input_dim, message_func="distmult",
                  aggregate_func="pna", layer_norm=False, activation="relu", dependent=False, project_relations=False):
         super(GeneralizedRelationalConv, self).__init__()

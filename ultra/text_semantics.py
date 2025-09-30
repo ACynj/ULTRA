@@ -21,6 +21,7 @@ SYSTEM_INSTRUCTION = (
     "Provide exactly two separate JSON objects in your response, corresponding to each step, strictly in the order presented above. "
     "Do not include additional explanations or metadata beyond the specified JSON objects. "
     "Always provide both JSON objects and ensure they contain all the original relation names as keys."
+    "Please generate the descriptions of all the relationships that provide triples."
 )
 
 # 构建LLM的提示词函数，根据关系示例构建提示词

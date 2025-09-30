@@ -41,8 +41,9 @@ class RelNBFNet(BaseNBFNet):
 
     def __init__(self, input_dim, hidden_dims, num_relation=4, **kwargs):
         super().__init__(input_dim, hidden_dims, num_relation, **kwargs)
-
+   
         self.layers = nn.ModuleList()
+        # 构建多层 self.dims代表输入层和隐藏层
         for i in range(len(self.dims) - 1):
             self.layers.append(
                 layers.GeneralizedRelationalConv(
@@ -221,6 +222,7 @@ class SemmaRelModel(nn.Module):
         self.text = TextRelNBFNet(input_dim=input_dim, hidden_dims=hidden_dims, num_relation=1, **text_kwargs)
         self.alpha = alpha
         self.fusion = fusion
+        # 进行特征融合
         if fusion == "mlp":
             self.fuse = nn.Sequential(
                 nn.Linear(input_dim * 2, input_dim),

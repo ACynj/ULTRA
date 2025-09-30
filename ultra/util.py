@@ -156,10 +156,13 @@ def create_working_directory(cfg):
 
 
 def build_dataset(cfg):
+    # 深拷贝配置文件中的dataset部分,防止修改原配置
     data_config = copy.deepcopy(cfg.dataset)
+    # 从数据集中取出class字段,得到数据集类名，并从data_config中删除该字段
     cls = data_config.pop("class")
-
+    # 从ultra.datasets模块中获取名为cls的数据集类
     ds_cls = getattr(datasets, cls)
+    # 用剩下的参数初始化数据集类，得到数据集对象
     dataset = ds_cls(**data_config)
 
     if get_rank() == 0:
